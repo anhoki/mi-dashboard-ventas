@@ -3,6 +3,8 @@ import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 import numpy as np
+import requests
+import json
 
 # Configuración de la página
 st.set_page_config(
@@ -44,8 +46,22 @@ def cargar_datos():
 
     return df
 
+# Función para cargar GeoJSON de Guatemala (desde repositorio público)
+@st.cache_data
+def cargar_geojson_guatemala():
+    url = "https://raw.githubusercontent.com/tierradenadies/guatemala-geojson/master/departamentos.geojson"
+    try:
+        response = requests.get(url)
+        response.raise_for_status()
+        geojson = response.json()
+        return geojson
+    except:
+        st.warning("No se pudo cargar el mapa de departamentos. Verifica tu conexión.")
+        return None
+
 # Cargar datos
 df = cargar_datos()
+geojson = cargar_geojson_guatemala()
 
 # Verificar que hay datos
 if df.empty:
@@ -113,11 +129,10 @@ if not df_filtrado[df_filtrado['monto_adjudicado'].notna()].empty:
     ]
 
 # ============================================
-# MÉTRICAS CLAVE (adaptadas a Guatecompras)
+# MÉTRICAS CLAVE
 # ============================================
 st.subheader("📊 Métricas Generales")
 
-# Calcular métricas solo con datos relevantes
 total_proyectos = len(df_filtrado)
 proyectos_adjudicados = df_filtrado[df_filtrado['estatus'] == 'Adjudicado'].shape[0]
 monto_total = df_filtrado['monto_adjudicado'].sum()
@@ -132,26 +147,22 @@ with col1:
         label="📌 Total de proyectos",
         value=f"{total_proyectos:,}"
     )
-
 with col2:
     st.metric(
         label="✅ Adjudicados",
         value=f"{proyectos_adjudicados:,}",
         delta=f"{proyectos_adjudicados/total_proyectos*100:.1f}% del total"
     )
-
 with col3:
     st.metric(
         label="💰 Monto total adjudicado",
         value=f"Q{monto_total:,.0f}" if not pd.isna(monto_total) else "Q0"
     )
-
 with col4:
     st.metric(
         label="📊 Promedio por proyecto",
         value=f"Q{monto_promedio:,.0f}" if not pd.isna(monto_promedio) else "Q0"
     )
-
 with col5:
     st.metric(
         label="🔄 Ofertas promedio",
@@ -161,15 +172,13 @@ with col5:
 st.markdown("---")
 
 # ============================================
-# GRÁFICOS
+# GRÁFICOS PRINCIPALES
 # ============================================
 
-# Primera fila: dos gráficos
 col1, col2 = st.columns(2)
 
 with col1:
     st.subheader("💰 Monto adjudicado por región")
-    # Agrupar por región y sumar montos
     monto_region = df_filtrado.groupby('region')['monto_adjudicado'].sum().reset_index()
     monto_region = monto_region.sort_values('monto_adjudicado', ascending=True)
     fig_monto_region = px.bar(
@@ -199,12 +208,10 @@ with col2:
     fig_tipo.update_layout(height=400)
     st.plotly_chart(fig_tipo, use_container_width=True)
 
-# Segunda fila: evolución temporal y top departamentos
 col1, col2 = st.columns(2)
 
 with col1:
     st.subheader("📅 Evolución de adjudicaciones por año")
-    # Filtrar solo adjudicados con fecha
     adjudicados_por_año = df_filtrado[df_filtrado['estatus'] == 'Adjudicado']
     if not adjudicados_por_año.empty:
         año_counts = adjudicados_por_año['año_adjudicacion'].value_counts().sort_index().reset_index()
@@ -235,7 +242,76 @@ with col2:
     )
     st.plotly_chart(fig_top, use_container_width=True)
 
-# Tercera fila: tabla de datos
+# ============================================
+# NUEVAS VISUALIZACIONES: MAPA Y TOP PROVEEDORES
+# ============================================
+st.markdown("---")
+st.subheader("🗺️ Mapa de inversión por departamento")
+
+if geojson is not None:
+    # Agrupar datos por departamento
+    monto_por_depto = df_filtrado.groupby('departamento')['monto_adjudicado'].sum().reset_index()
+    # Asegurar que los nombres coincidan con el GeoJSON (puede haber diferencias)
+    # El GeoJSON usa nombres como "Guatemala", "Alta Verapaz", etc.
+    # Hacemos un merge aproximado: convertimos a mayúsculas y quitamos espacios extra
+    monto_por_depto['depto_norm'] = monto_por_depto['departamento'].str.strip().str.upper()
+    
+    # Crear el mapa coroplético
+    fig_mapa = px.choropleth(
+        monto_por_depto,
+        geojson=geojson,
+        locations='depto_norm',
+        featureidkey="properties.DEPARTAMENTO",  # ajusta según la estructura del GeoJSON
+        color='monto_adjudicado',
+        color_continuous_scale='Viridis',
+        range_color=(monto_por_depto['monto_adjudicado'].min(), monto_por_depto['monto_adjudicado'].max()),
+        labels={'monto_adjudicado': 'Monto (Q)'},
+        title='Inversión total por departamento'
+    )
+    fig_mapa.update_geos(fitbounds="locations", visible=False)
+    fig_mapa.update_layout(height=500, margin={"r":0,"t":30,"l":0,"b":0})
+    st.plotly_chart(fig_mapa, use_container_width=True)
+else:
+    st.warning("No se pudo cargar el mapa. Mostrando datos en tabla.")
+    monto_por_depto = df_filtrado.groupby('departamento')['monto_adjudicado'].sum().reset_index()
+    st.dataframe(monto_por_depto.sort_values('monto_adjudicado', ascending=False))
+
+# TOP PROVEEDORES
+st.subheader("🏢 Top proveedores por monto adjudicado")
+# Filtrar solo proyectos adjudicados con proveedor no nulo
+proveedores_df = df_filtrado[df_filtrado['estatus'] == 'Adjudicado']
+proveedores_df = proveedores_df[proveedores_df['proveedor_ganador'].notna()]
+
+if not proveedores_df.empty:
+    # Agrupar por proveedor: sumar montos y contar proyectos
+    top_proveedores = proveedores_df.groupby('proveedor_ganador').agg(
+        monto_total=('monto_adjudicado', 'sum'),
+        cantidad_proyectos=('nog', 'count')
+    ).reset_index().sort_values('monto_total', ascending=False).head(10)
+    
+    col1, col2 = st.columns([2, 1])
+    with col1:
+        fig_prov = px.bar(
+            top_proveedores,
+            x='monto_total',
+            y='proveedor_ganador',
+            orientation='h',
+            title='Top 10 proveedores por monto',
+            labels={'monto_total': 'Monto (Q)', 'proveedor_ganador': ''},
+            color='monto_total',
+            color_continuous_scale='Oranges',
+            text='cantidad_proyectos'  # mostrar número de proyectos
+        )
+        fig_prov.update_traces(texttemplate='%{text} proyectos', textposition='inside')
+        fig_prov.update_layout(height=400)
+        st.plotly_chart(fig_prov, use_container_width=True)
+    with col2:
+        st.subheader("📋 Detalle")
+        st.dataframe(top_proveedores[['proveedor_ganador', 'monto_total', 'cantidad_proyectos']].head(5))
+else:
+    st.info("No hay datos de proveedores para los filtros seleccionados.")
+
+# Tabla final de proyectos
 st.subheader("📋 Últimos proyectos")
 columnas_mostrar = ['nog', 'descripcion', 'departamento', 'tipo_proyecto', 'monto_adjudicado', 'estatus', 'proveedor_ganador']
 df_display = df_filtrado[columnas_mostrar].sort_values('nog', ascending=False).head(10)
