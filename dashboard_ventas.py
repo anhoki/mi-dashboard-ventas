@@ -20,7 +20,6 @@ st.markdown("---")
 # Función para cargar datos con caché
 @st.cache_data
 def cargar_datos():
-    # Intentar leer el CSV con diferentes codificaciones
     encodings = ['utf-8', 'latin-1', 'iso-8859-1']
     for enc in encodings:
         try:
@@ -41,7 +40,11 @@ def cargar_datos():
     # Convertir montos a número
     df['monto_adjudicado'] = pd.to_numeric(df['monto_adjudicado'], errors='coerce')
 
-    # Crear columna de año (para análisis temporal)
+    # 🆕 Convertir número de ofertas a número (coerce convierte errores a NaN)
+    if 'numero_ofertas' in df.columns:
+        df['numero_ofertas'] = pd.to_numeric(df['numero_ofertas'], errors='coerce')
+
+    # Crear columna de año
     df['año_adjudicacion'] = df['fecha_adjudicacion'].dt.year
 
     return df
