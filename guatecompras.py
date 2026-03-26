@@ -275,58 +275,204 @@ if not df_ofertas.empty:
     st.plotly_chart(fig_ofertas, use_container_width=True)
 
 
-
 # ============================================
 # MAPAS
 # ============================================
-st.header("🗺️ Visualización Geográfica")
+st.header("🗺️ Visualización Geográfica de Licitaciones")
 
 try:
     import folium
     from streamlit_folium import folium_static
     from folium.plugins import MarkerCluster, HeatMap
     
-    # Proyectos con coordenadas
-    proyectos_con_coords = df_filtrado.dropna(subset=['LATITUD', 'LONGITUD']).copy()
+    # NOTA: Tus datos de licitaciones NO tienen coordenadas (LATITUD/LONGITUD)
+    # Por lo tanto, usamos centroides por departamento para ubicar las licitaciones
     
-    if len(proyectos_con_coords) > 0:
-        center_lat = proyectos_con_coords['LATITUD'].mean()
-        center_lon = proyectos_con_coords['LONGITUD'].mean()
+    # Cargar coordenadas de departamentos (puedes crear un archivo con las coordenadas de cada departamento)
+    # Si no tienes coordenadas, usamos centroides aproximados
+    coordenadas_departamentos = {
+        'Guatemala': [14.6349, -90.5069],
+        'Sacatepéquez': [14.5547, -90.7333],
+        'Chimaltenango': [14.6604, -90.8215],
+        'Escuintla': [14.3012, -90.7852],
+        'Santa Rosa': [14.1646, -90.2852],
+        'Sololá': [14.7483, -91.1858],
+        'Totonicapán': [14.9124, -91.3611],
+        'Quetzaltenango': [14.8348, -91.5184],
+        'Suchitepéquez': [14.5358, -91.4839],
+        'Retalhuleu': [14.5341, -91.6787],
+        'San Marcos': [14.9657, -91.7951],
+        'Huehuetenango': [15.3192, -91.4724],
+        'Quiché': [15.0304, -91.1484],
+        'Baja Verapaz': [15.1322, -90.3761],
+        'Alta Verapaz': [15.4865, -90.3273],
+        'Petén': [16.9064, -89.9315],
+        'Izabal': [15.6868, -88.8704],
+        'Zacapa': [14.9781, -89.5283],
+        'Chiquimula': [14.8003, -89.5442],
+        'Jalapa': [14.6347, -89.9867],
+        'Jutiapa': [14.2905, -89.8919],
+        'El Progreso': [14.8571, -90.0795]
+    }
+    
+    # Crear coordenadas para las licitaciones basadas en su departamento
+    licitaciones_con_coords = df_filtrado.copy()
+    
+    # Agregar coordenadas según departamento
+    def get_coords(departamento):
+        if departamento in coordenadas_departamentos:
+            return coordenadas_departamentos[departamento]
+        else:
+            return [15.5, -90.25]  # Centro aproximado de Guatemala
+    
+    licitaciones_con_coords['LATITUD'] = licitaciones_con_coords['departamento'].apply(
+        lambda x: get_coords(x)[0] if pd.notna(x) else None
+    )
+    licitaciones_con_coords['LONGITUD'] = licitaciones_con_coords['departamento'].apply(
+        lambda x: get_coords(x)[1] if pd.notna(x) else None
+    )
+    
+    # Eliminar filas sin coordenadas
+    licitaciones_con_coords = licitaciones_con_coords.dropna(subset=['LATITUD', 'LONGITUD'])
+    
+    if len(licitaciones_con_coords) > 0:
+        center_lat = licitaciones_con_coords['LATITUD'].mean()
+        center_lon = licitaciones_con_coords['LONGITUD'].mean()
         
-        tab1, tab2 = st.tabs(["📍 Mapa de Proyectos", "🔥 Mapa de Calor"])
+        tab1, tab2, tab3 = st.tabs(["📍 Mapa de Licitaciones", "🔥 Mapa de Calor", "💰 Mapa de Montos"])
         
         with tab1:
+            st.subheader("📍 Ubicación de Licitaciones por Departamento")
+            
             m = folium.Map(location=[center_lat, center_lon], zoom_start=8, control_scale=True)
             marker_cluster = MarkerCluster().add_to(m)
             
-            for _, row in proyectos_con_coords.iterrows():
+            # Definir colores según estatus
+            status_colors = {
+                'Adjudicado': 'green',
+                'Evaluacion': 'orange',
+                'En Proceso': 'blue',
+                'Finalizado': 'purple'
+            }
+            
+            for _, row in licitaciones_con_coords.iterrows():
+                color = status_colors.get(row['estatus'], 'gray')
+                
                 popup = f"""
-                <b>{row['NOMBRE_PROYECTO']}</b><br>
-                <b>Institución:</b> {row['INSTITUCION']}<br>
-                <b>Ubicación:</b> {row['MUNICIPIO']}, {row['DEPARTAMENTO']}<br>
-                <b>Avance:</b> {row['AVANCE_FISICO']:.1f}%<br>
-                <b>Monto:</b> Q{row['MONTO_MODIFICADO']:,.2f}<br>
-                <b>Empresa:</b> {row['EMPRESA']}<br>
-                <b>Observaciones:</b> {str(row['OBSERVACIONES'])[:100]}...
+                <div style="font-family: monospace; min-width: 280px;">
+                    <b style="font-size: 14px;">NOG: {row['nog']}</b><br>
+                    <hr style="margin: 5px 0;">
+                    <b>Descripción:</b> {row['descripcion'][:100]}...<br>
+                    <b>Ubicación:</b> {row['municipio']}, {row['departamento']}<br>
+                    <b>Tipo:</b> {row['tipo_proyecto']}<br>
+                    <b>Monto:</b> Q{row['monto_adjudicado']:,.2f}<br>
+                    <b>Proveedor:</b> {row['proveedor_ganador']}<br>
+                    <b>Ofertas:</b> {row['numero_ofertas']}<br>
+                    <b>Estatus:</b> {row['estatus']}<br>
+                    <b>Adjudicación:</b> {row['fecha_adjudicacion'].strftime('%d/%m/%Y') if pd.notna(row['fecha_adjudicacion']) else 'N/A'}
+                </div>
                 """
+                
                 folium.Marker(
                     location=[row['LATITUD'], row['LONGITUD']],
-                    popup=folium.Popup(popup, max_width=300),
-                    tooltip=row['NOMBRE_PROYECTO']
+                    popup=folium.Popup(popup, max_width=350),
+                    tooltip=f"NOG: {row['nog']} - {row['proveedor_ganador']}",
+                    icon=folium.Icon(color=color, icon='info-sign', prefix='glyphicon')
                 ).add_to(marker_cluster)
             
-            folium_static(m, width=1200, height=500)
+            folium_static(m, width=1200, height=600)
             
-        with tab2:
-            heat_data = [[row['LATITUD'], row['LONGITUD']] for _, row in proyectos_con_coords.iterrows()]
-            heat_map = folium.Map(location=[center_lat, center_lon], zoom_start=8)
-            HeatMap(heat_data, radius=15, blur=10).add_to(heat_map)
-            folium_static(heat_map, width=1200, height=500)
-    else:
-        st.info("ℹ️ No hay proyectos con coordenadas válidas")
+            # Estadísticas
+            col1, col2 = st.columns(2)
+            with col1:
+                st.metric("Licitaciones mapeadas", len(licitaciones_con_coords))
+            with col2:
+                st.metric("Total licitaciones", len(df_filtrado))
         
-except ImportError:
-    st.warning("⚠️ Librerías de mapas no instaladas")
+        with tab2:
+            st.subheader("🔥 Mapa de Calor - Densidad de Licitaciones por Departamento")
+            
+            # Preparar datos ponderados por monto para el mapa de calor
+            heat_data = []
+            for _, row in licitaciones_con_coords.iterrows():
+                # Repetir coordenadas según el monto (para dar peso)
+                peso = min(int(row['monto_adjudicado'] / 100000), 50)  # Máximo 50 repeticiones
+                for _ in range(max(1, peso)):
+                    heat_data.append([row['LATITUD'], row['LONGITUD']])
+            
+            heat_map = folium.Map(location=[center_lat, center_lon], zoom_start=8)
+            HeatMap(heat_data, radius=20, blur=15, min_opacity=0.3).add_to(heat_map)
+            folium_static(heat_map, width=1200, height=600)
+            
+            # Top departamentos por cantidad de licitaciones
+            st.subheader("🏙️ Top 10 Departamentos con más licitaciones")
+            top_deptos = licitaciones_con_coords['departamento'].value_counts().head(10).reset_index()
+            top_deptos.columns = ['Departamento', 'Cantidad']
+            fig_top = px.bar(
+                top_deptos,
+                x='Cantidad',
+                y='Departamento',
+                orientation='h',
+                title="Licitaciones por Departamento",
+                color='Cantidad',
+                color_continuous_scale='Viridis'
+            )
+            st.plotly_chart(fig_top, use_container_width=True)
+        
+        with tab3:
+            st.subheader("💰 Mapa de Montos por Departamento")
+            
+            # Crear mapa coroplético con montos por departamento
+            monto_por_dep = licitaciones_con_coords.groupby('departamento')['monto_adjudicado'].sum().reset_index()
+            monto_por_dep.columns = ['Departamento', 'Monto_Total']
+            
+            # Crear mapa de colores
+            m_choropleth = folium.Map(location=[center_lat, center_lon], zoom_start=7)
+            
+            # Crear un GeoJSON simple para los departamentos (usando coordenadas de los centroides)
+            # Nota: Para un mapa coroplético más preciso, necesitarías un archivo GeoJSON de departamentos
+            # Por ahora, usamos marcadores con tamaño según monto
+            
+            for _, row in monto_por_dep.iterrows():
+                if row['Departamento'] in coordenadas_departamentos:
+                    coords = coordenadas_departamentos[row['Departamento']]
+                    monto = row['Monto_Total']
+                    
+                    # Tamaño del círculo según el monto
+                    radius = max(5, min(int(monto / 50000), 40))
+                    
+                    folium.CircleMarker(
+                        location=coords,
+                        radius=radius,
+                        popup=f"<b>{row['Departamento']}</b><br>Monto: Q{monto:,.2f}",
+                        tooltip=f"{row['Departamento']}: Q{monto:,.2f}",
+                        color='blue',
+                        fill=True,
+                        fillColor='blue',
+                        fillOpacity=0.5
+                    ).add_to(m_choropleth)
+            
+            folium_static(m_choropleth, width=1200, height=600)
+            
+            # Tabla de montos por departamento
+            st.subheader("📊 Resumen de Montos por Departamento")
+            monto_por_dep_sorted = monto_por_dep.sort_values('Monto_Total', ascending=False)
+            st.dataframe(
+                monto_por_dep_sorted.style.format({
+                    'Monto_Total': 'Q{:,.2f}'
+                }),
+                use_container_width=True
+            )
+    
+    else:
+        st.info("ℹ️ No hay licitaciones con departamento asignado para mostrar en el mapa")
+        
+except ImportError as e:
+    st.warning(f"⚠️ Librerías de mapas no instaladas: {e}")
+    st.info("📌 Para instalar: pip install folium streamlit-folium")
+
+
+
 # ============================================
 # TABLA DE DATOS
 # ============================================
